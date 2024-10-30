@@ -1,35 +1,33 @@
-const nodemailer = require("nodemailer");
-require("dotenv").config();
-
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false, // Use `true` for port 465, `false` for all other ports
-  auth: {
-    user: process.env.USER,
-    pass: process.env.APP_PASSWORD,
-  },
-});
+require("dotenv").config(); // Ensure to load environment variables
 
 const mailOptions = {
   from: {
     name: "Ruby",
-    address: "process.env.USER",
-  }, // sender address
-  to: ["rkamathv@gmail.com", "nayakapoorva2003@gmail.com"], // list of receivers
-  subject: "Hello ✔", // Subject line
-  text: "Hello world?", // plain text body
-  html: "<b>Hello world?</b>", // html body
+    address: process.env.USER_EMAIL, // Use environment variable for email
+  },
+  to: process.env.RECEIVER_EMAILS.split(","), // Use environment variable for receivers
+  subject: "Hello ✔",
+  text: "Hello world?",
+  html: "<b>Hello world?</b>",
 };
 
 const sendMail = async (transporter, mailOptions) => {
+  if (!transporter || !mailOptions) {
+    console.error("Invalid transporter or mail options");
+    return;
+  }
+
   try {
     await transporter.sendMail(mailOptions);
-    console.log("Email has been sent succesfully");
+    console.log("Email has been sent successfully");
   } catch (error) {
-    console.error(error);
+    console.error("Error sending email:", error);
   }
 };
 
-sendMail(transporter, mailOptions);
+// Ensure transporter is defined and configured properly
+if (typeof transporter !== "undefined") {
+  sendMail(transporter, mailOptions);
+} else {
+  console.error("Transporter is not defined");
+}
