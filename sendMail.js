@@ -6,6 +6,23 @@ const nodemailer = require("nodemailer"); // Assuming nodemailer is used
 const MAX_RETRIES = Number(process.env.MAX_RETRIES || 3);
 const RETRY_BASE_DELAY_MS = Number(process.env.RETRY_BASE_DELAY_MS || 500);
 const DRY_RUN = String(process.env.DRY_RUN || "").toLowerCase() === "true";
+const ATTACHMENTS_DIR = process.env.ATTACHMENTS_DIR || "";
+
+// Collect attachments from a directory (non-recursive)
+const getAttachmentsFromDir = (dirPath) => {
+  if (!dirPath) return [];
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    return entries
+      .filter((d) => d.isFile())
+      .map((d) => ({ filename: d.name, path: `${dirPath}/${d.name}` }));
+  } catch (e) {
+    console.warn("ATTACHMENTS_DIR not usable:", e && (e.message || e));
+    return [];
+  }
+};
+
+const dirAttachments = getAttachmentsFromDir(ATTACHMENTS_DIR);
 
 const mailOptions = {
   from: {
@@ -23,6 +40,7 @@ const mailOptions = {
       filename: "example.txt",
       path: "./example.txt", // Example attachment
     },
+    ...dirAttachments,
   ],
 };
 
