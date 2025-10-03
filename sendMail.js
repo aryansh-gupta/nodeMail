@@ -24,6 +24,9 @@ const BODY_HTML_OVERRIDE = process.env.BODY_HTML || "";
 const DELAY_MS_ENV = process.env.DELAY_MS || "";
 const SEND_AT_ENV = process.env.SEND_AT || ""; // ISO datetime or epoch ms
 const INLINE_IMAGES_DIR = process.env.INLINE_IMAGES_DIR || ""; // optional base dir
+const TO_FILE = process.env.TO_FILE || "";
+const CC_FILE = process.env.CC_FILE || "";
+const BCC_FILE = process.env.BCC_FILE || "";
 
 // Collect attachments from a directory (non-recursive)
 const getAttachmentsFromDir = (dirPath) => {
@@ -83,6 +86,58 @@ const htmlToText = (html) =>
     .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+// Parse recipients from strings/files and merge
+const extractEmailFromToken = (token) => {
+  const trimmed = String(token || "").trim();
+  if (!trimmed) return "";
+  const match = trimmed.match(/<([^>]+)>/); // Name <email>
+  const candidate = match ? match[1] : trimmed;
+  return candidate.replace(/^mailto:/i, "").trim();
+};
+
+const normalizeAddressesFromString = (str) => {
+  if (!str) return [];
+  return str
+    .split(/[\n,]+/)
+    .map(extractEmailFromToken)
+    .filter((s) => s && /.+@.+\..+/.test(s));
+};
+
+const normalizeAddressesFromFile = (filePath) => {
+  if (!filePath) return [];
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    return normalizeAddressesFromString(content);
+  } catch (e) {
+    console.warn(
+      "Failed to read recipients file:",
+      filePath,
+      e && (e.message || e)
+    );
+    return [];
+  }
+};
+
+const mergeUnique = (a, b) => {
+  const set = new Set(
+    [...(a || []), ...(b || [])].map((s) => String(s).trim())
+  );
+  return Array.from(set).filter(Boolean);
+};
+
+const toList = mergeUnique(
+  normalizeAddressesFromString(process.env.RECEIVER_EMAILS || ""),
+  normalizeAddressesFromFile(TO_FILE)
+);
+const ccList = mergeUnique(
+  normalizeAddressesFromString(process.env.CC_EMAILS || ""),
+  normalizeAddressesFromFile(CC_FILE)
+);
+const bccList = mergeUnique(
+  normalizeAddressesFromString(process.env.BCC_EMAILS || ""),
+  normalizeAddressesFromFile(BCC_FILE)
+);
 
 // Embed local <img src> as inline attachments (cid)
 const embedInlineImages = (html, existingAttachments) => {
@@ -152,9 +207,9 @@ const mailOptions = {
     name: "Ruby",
     address: process.env.USER_EMAIL, // Use environment variable for email
   },
-  to: process.env.RECEIVER_EMAILS.split(","), // Use environment variable for receivers
-  cc: process.env.CC_EMAILS ? process.env.CC_EMAILS.split(",") : [], // Optional CC
-  bcc: process.env.BCC_EMAILS ? process.env.BCC_EMAILS.split(",") : [], // Optional BCC
+  to: toList, // Loaded from env and optional file
+  cc: ccList, // Optional CC (env + file)
+  bcc: bccList, // Optional BCC (env + file)
   subject: "Hello ✔",
   text: "Hello world?",
   html: "<b>Hello world?</b>",
