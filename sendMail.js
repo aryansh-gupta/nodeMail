@@ -20,6 +20,8 @@ const TEMPLATE_DATA_FILE = process.env.TEMPLATE_DATA_FILE || "";
 const SUBJECT_OVERRIDE = process.env.SUBJECT || "";
 const BODY_TEXT_OVERRIDE = process.env.BODY_TEXT || "";
 const BODY_HTML_OVERRIDE = process.env.BODY_HTML || "";
+const DELAY_MS_ENV = process.env.DELAY_MS || "";
+const SEND_AT_ENV = process.env.SEND_AT || ""; // ISO datetime or epoch ms
 
 // Collect attachments from a directory (non-recursive)
 const getAttachmentsFromDir = (dirPath) => {
@@ -138,14 +140,50 @@ const shouldRetry = (error) => {
   return typeof code === "number" && code >= 500 && code < 600;
 };
 
+// Compute delay from DELAY_MS or SEND_AT
+const resolvePlannedDelayMs = () => {
+  // Priority: SEND_AT > DELAY_MS
+  if (SEND_AT_ENV) {
+    let targetTs = NaN;
+    // Try epoch ms
+    if (/^\d+$/.test(String(SEND_AT_ENV).trim())) {
+      targetTs = Number(SEND_AT_ENV);
+    } else {
+      const asDate = new Date(SEND_AT_ENV);
+      targetTs = asDate.getTime();
+    }
+    if (!Number.isFinite(targetTs)) return 0;
+    const now = Date.now();
+    return Math.max(0, targetTs - now);
+  }
+  if (DELAY_MS_ENV) {
+    const n = Number(DELAY_MS_ENV);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  return 0;
+};
+
 const sendMail = async (transporter, mailOptions) => {
   try {
     validateEmailOptions(mailOptions);
 
+    const plannedDelayMs = resolvePlannedDelayMs();
     if (DRY_RUN) {
       console.log("[DRY_RUN] Email not sent. Preview:");
       console.log(JSON.stringify(mailOptions, null, 2));
+      if (plannedDelayMs > 0) {
+        const eta = new Date(Date.now() + plannedDelayMs).toISOString();
+        console.log(`[DRY_RUN] Would send in ${plannedDelayMs} ms at ${eta}`);
+      }
       return;
+    }
+
+    if (plannedDelayMs > 0) {
+      const eta = new Date(Date.now() + plannedDelayMs).toISOString();
+      console.log(
+        `Waiting ${plannedDelayMs} ms before sending (until ${eta})...`
+      );
+      await sleep(plannedDelayMs);
     }
 
     let attempt = 0;
