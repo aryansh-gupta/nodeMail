@@ -1,5 +1,6 @@
 require("dotenv").config(); // Ensure to load environment variables
 const fs = require("fs");
+const path = require("path");
 const nodemailer = require("nodemailer"); // Assuming nodemailer is used
 let handlebars = null;
 try {
@@ -22,6 +23,7 @@ const BODY_TEXT_OVERRIDE = process.env.BODY_TEXT || "";
 const BODY_HTML_OVERRIDE = process.env.BODY_HTML || "";
 const DELAY_MS_ENV = process.env.DELAY_MS || "";
 const SEND_AT_ENV = process.env.SEND_AT || ""; // ISO datetime or epoch ms
+const INLINE_IMAGES_DIR = process.env.INLINE_IMAGES_DIR || ""; // optional base dir
 
 // Collect attachments from a directory (non-recursive)
 const getAttachmentsFromDir = (dirPath) => {
@@ -82,6 +84,69 @@ const htmlToText = (html) =>
     .replace(/\s+/g, " ")
     .trim();
 
+// Embed local <img src> as inline attachments (cid)
+const embedInlineImages = (html, existingAttachments) => {
+  if (!html) return { html, attachments: existingAttachments };
+  const imgSrcRegex = /<img\s+[^>]*src=["']([^"']+)["'][^>]*>/gi;
+  let updatedHtml = html;
+  const attachments = Array.isArray(existingAttachments)
+    ? [...existingAttachments]
+    : [];
+
+  const seen = new Map();
+  let match;
+  while ((match = imgSrcRegex.exec(html)) !== null) {
+    const originalSrc = match[1];
+    if (/^https?:\/\//i.test(originalSrc) || /^cid:/i.test(originalSrc)) {
+      continue; // skip remote or already inlined
+    }
+
+    // Resolve local path candidates
+    const candidatePaths = [];
+    if (path.isAbsolute(originalSrc)) candidatePaths.push(originalSrc);
+    candidatePaths.push(path.resolve(process.cwd(), originalSrc));
+    if (INLINE_IMAGES_DIR) {
+      candidatePaths.push(
+        path.resolve(INLINE_IMAGES_DIR, path.basename(originalSrc))
+      );
+      candidatePaths.push(path.resolve(INLINE_IMAGES_DIR, originalSrc));
+    }
+
+    const filePath = candidatePaths.find((p) => {
+      try {
+        return fs.existsSync(p) && fs.statSync(p).isFile();
+      } catch (_) {
+        return false;
+      }
+    });
+
+    if (!filePath) continue;
+
+    // Reuse cid for same file path within one email
+    let cid = seen.get(filePath);
+    if (!cid) {
+      const base = path.basename(filePath).replace(/[^a-zA-Z0-9_.-]/g, "_");
+      cid = `${Date.now()}_${Math.random().toString(36).slice(2)}_${base}`;
+      attachments.push({
+        filename: path.basename(filePath),
+        path: filePath,
+        cid,
+      });
+      seen.set(filePath, cid);
+    }
+
+    // Replace only this occurrence's src with cid
+    const escaped = originalSrc.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const srcReplaceRegex = new RegExp(
+      `(<img\\s+[^>]*src=["'])${escaped}(["'][^>]*>)`,
+      "i"
+    );
+    updatedHtml = updatedHtml.replace(srcReplaceRegex, `$1cid:${cid}$2`);
+  }
+
+  return { html: updatedHtml, attachments };
+};
+
 const mailOptions = {
   from: {
     name: "Ruby",
@@ -117,6 +182,13 @@ if (compiledHtmlFromTemplate) {
   if (!BODY_TEXT_OVERRIDE) {
     mailOptions.text = htmlToText(compiledHtmlFromTemplate);
   }
+}
+
+// After overrides, inline local images referenced by HTML into attachments
+{
+  const result = embedInlineImages(mailOptions.html, mailOptions.attachments);
+  mailOptions.html = result.html;
+  mailOptions.attachments = result.attachments;
 }
 
 const validateEmailOptions = (options) => {
